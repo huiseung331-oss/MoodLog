@@ -1,7 +1,7 @@
 import re
 import calendar
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import plotly.express as px
@@ -81,7 +81,7 @@ st.markdown("""
 }
 .section-title {font-size: 1.15rem; font-weight: 800; color: #1E293B; margin: 22px 0 12px 0;}
 
-/* ---------- 이번 주 스트립 ---------- */
+/* ---------- 최근 7일 스트립 ---------- */
 .week {display: flex; gap: 12px; justify-content: space-between;}
 .day {flex: 1; text-align: center;}
 .dot {
@@ -125,7 +125,7 @@ section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checke
 }
 .stButton > button[kind="primary"]:hover {color: white; box-shadow: 0 10px 22px rgba(108,92,231,0.40);}
 
-/* ---------- 입력창 / 탭 / 확장 / 차트 박스 ---------- */
+/* ---------- 입력창 / 탭 / 확장 ---------- */
 .stTextArea textarea, .stTextInput input {border-radius: 14px; border: 1px solid #E3E2FA; background: white;}
 .stTabs [data-baseweb="tab-list"] {gap: 8px; border-bottom: none;}
 .stTabs [data-baseweb="tab"] {
@@ -212,7 +212,6 @@ NEG_BEFORE = re.compile(r"(?:^|\s)(안|못)\s*$")
 
 def is_negated(text, start, end):
     """단어가 속한 '절' 안에서만 부정 표현이 있는지 검사"""
-    # 뒤쪽: 단어 끝 ~ 절 끝
     after = text[end:end + 12]
     m = CLAUSE_BREAK.search(after)
     if m:
@@ -220,7 +219,6 @@ def is_negated(text, start, end):
     if NEG_AFTER.search(after):
         return True
 
-    # 앞쪽: 절 시작 ~ 단어 시작
     before = CLAUSE_BREAK.split(text[:start])[-1]
     return bool(NEG_BEFORE.search(before))
 
@@ -335,7 +333,6 @@ def calc_streak(df):
 # 4. 사이드바 & 히어로
 # =====================================================
 
-from datetime import datetime
 _h = datetime.now().hour
 GREETING = "좋은 아침이에요 ☀️" if _h < 12 else "좋은 오후예요 🌤️" if _h < 18 else "좋은 저녁이에요 🌙"
 
@@ -382,8 +379,7 @@ if menu.endswith("홈"):
         with c3:
             card("총 일기 수", f"📖 {len(df)}개")
         with c4:
-            color = COLORS[emo_from_score(avg7)]
-            card("최근 7일 평균", f"{avg7:+.1f}점", color)
+            card("최근 7일 평균", f"{avg7:+.1f}점", COLORS[emo_from_score(avg7)])
 
         if avg7 > 2:
             msg = "요즘 기분 좋은 날이 많네요! 이 에너지를 계속 이어가 봐요 ✨"
@@ -395,7 +391,6 @@ if menu.endswith("홈"):
             msg = "요즘 조금 힘든 일이 있었나 봐요. 기록하는 것만으로도 큰 힘이 돼요 💛"
         st.markdown(f'<div class="msg">{msg}</div>', unsafe_allow_html=True)
 
-        # 이번 주 감정 스트립
         st.markdown('<div class="section-title">🗓️ 최근 7일</div>', unsafe_allow_html=True)
         by_day = df.groupby(df["diary_date"].dt.date)["score"].mean().to_dict()
         strip = '<div class="card"><div class="week">'
@@ -542,9 +537,11 @@ elif menu.endswith("감정 분석"):
             with c4:
                 card("😢 부정", f"{(df['emotion'] == '부정').sum()}개", COLORS["부정"])
 
-            tab1, tab2, tab3, tab4 = st.tabs(["📈 감정 변화", "🥧 분포·요일", "🗓️ 감정 캘린더", "🔤 단어·태그"])
+            tab1, tab2, tab3, tab4 = st.tabs(
+                ["📈 감정 변화", "🥧 분포·요일", "🗓️ 감정 캘린더", "🔤 단어·태그"]
+            )
 
-            # --- 감정 변화
+            # ---------- 탭1: 감정 변화 ----------
             with tab1:
                 df = df.sort_values("diary_date")
                 df["이동평균"] = df["score"].rolling(3, min_periods=1).mean()
@@ -576,19 +573,168 @@ elif menu.endswith("감정 분석"):
                 b1.success(f"🌟 가장 행복했던 날: {best['diary_date'].strftime('%Y-%m-%d')} ({best['score']:+d}점)")
                 b2.error(f"🌧️ 가장 힘들었던 날: {worst['diary_date'].strftime('%Y-%m-%d')} ({worst['score']:+d}점)")
 
-            # --- 분포 / 요일
+            # ---------- 탭2: 분포 / 요일 ----------
             with tab2:
                 left, right = st.columns(2)
+
                 cnt = df["emotion"].value_counts()
                 fig2 = px.pie(
                     values=cnt.values, names=cnt.index, hole=0.6, title="감정 비율",
                     color=cnt.index, color_discrete_map=COLORS,
                 )
-                fig2.update_traces(textinfo="percent+label", marker=dict(line=dict(color="white", width=3)))
+                fig2.update_traces(textinfo="percent+label",
+                                   marker=dict(line=dict(color="white", width=3)))
                 fig2.update_layout(showlegend=False)
                 style_fig(fig2, 380)
                 with left.container(border=True):
                     st.plotly_chart(fig2, use_container_width=True)
 
                 df["요일"] = df["diary_date"].dt.dayofweek.map(lambda x: DAY_NAMES[x])
-                
+                wk = df.groupby("요일")["score"].mean().reindex(DAY_NAMES).reset_index()
+                fig3 = px.bar(
+                    wk, x="요일", y="score", title="요일별 평균 감정 점수",
+                    color="score", color_continuous_scale=SCALE, range_color=[-10, 10],
+                )
+                fig3.update_layout(yaxis_title="평균 점수", coloraxis_showscale=False)
+                style_fig(fig3, 380)
+                with right.container(border=True):
+                    st.plotly_chart(fig3, use_container_width=True)
+
+            # ---------- 탭3: 감정 캘린더 ----------
+            with tab3:
+                cc1, cc2 = st.columns(2)
+                year = cc1.selectbox("연도", list(range(today.year - 2, today.year + 1)), index=2)
+                month = cc2.selectbox("월", list(range(1, 13)), index=today.month - 1)
+
+                month_df = df_all[(df_all["diary_date"].dt.year == year) &
+                                  (df_all["diary_date"].dt.month == month)]
+                score_by_day = month_df.groupby(month_df["diary_date"].dt.day)["score"].mean().to_dict()
+
+                weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(year, month)
+                z, text = [], []
+                for w in weeks:
+                    z.append([score_by_day.get(d) if d else None for d in w])
+                    text.append([str(d) if d else "" for d in w])
+
+                heat = go.Figure(go.Heatmap(
+                    z=z, text=text, texttemplate="%{text}",
+                    x=DAY_NAMES,
+                    y=[f"{i + 1}주" for i in range(len(weeks))],
+                    colorscale=SCALE, zmin=-10, zmax=10, xgap=6, ygap=6,
+                    hovertemplate="점수: %{z}<extra></extra>",
+                    colorbar=dict(title="점수"),
+                ))
+                heat.update_yaxes(autorange="reversed")
+                heat.update_layout(title=f"{year}년 {month}월 감정 캘린더")
+                style_fig(heat, 400)
+                with st.container(border=True):
+                    st.plotly_chart(heat, use_container_width=True)
+                st.caption("초록은 긍정, 빨강은 부정, 빈 칸은 일기가 없는 날이에요.")
+
+            # ---------- 탭4: 단어 / 태그 ----------
+            with tab4:
+                left, right = st.columns(2)
+
+                stop = {"오늘", "하루", "정말", "너무", "그리고", "그래서", "하지만",
+                        "진짜", "그냥", "있었다", "했다"}
+                words = []
+                for t in df["content"]:
+                    words += [w for w in re.findall(r"[가-힣]{2,}", t) if w not in stop]
+                common = Counter(words).most_common(10)
+
+                with left.container(border=True):
+                    if common:
+                        wdf = pd.DataFrame(common, columns=["단어", "횟수"])
+                        fig4 = px.bar(wdf, x="횟수", y="단어", orientation="h",
+                                      title="자주 쓴 단어 TOP 10",
+                                      color_discrete_sequence=["#8E7CF3"])
+                        fig4.update_layout(yaxis=dict(autorange="reversed"))
+                        style_fig(fig4, 400)
+                        st.plotly_chart(fig4, use_container_width=True)
+                    else:
+                        st.info("분석할 단어가 아직 없어요.")
+
+                rows = []
+                for _, r in df.iterrows():
+                    for t in r["tags"].split(","):
+                        if t:
+                            rows.append({"태그": t, "score": r["score"]})
+
+                with right.container(border=True):
+                    if rows:
+                        tdf = (pd.DataFrame(rows).groupby("태그")["score"]
+                               .agg(["mean", "count"]).reset_index())
+                        fig5 = px.bar(
+                            tdf, x="태그", y="mean", title="태그별 평균 감정 점수",
+                            color="mean", color_continuous_scale=SCALE,
+                            range_color=[-10, 10], hover_data=["count"],
+                        )
+                        fig5.update_layout(yaxis_title="평균 점수", coloraxis_showscale=False)
+                        style_fig(fig5, 400)
+                        st.plotly_chart(fig5, use_container_width=True)
+                    else:
+                        st.info("일기에 태그를 달면 태그별 감정을 볼 수 있어요.")
+
+# =====================================================
+# 8. 기록 확인
+# =====================================================
+
+elif menu.endswith("기록 확인"):
+    st.header("📅 지난 일기")
+    df = load_df()
+
+    if df.empty:
+        st.info("작성한 일기가 없습니다.")
+    else:
+        f1, f2, f3 = st.columns([2, 1, 1])
+        keyword = f1.text_input("🔍 검색", placeholder="일기 내용에서 검색")
+        emo_filter = f2.multiselect("감정", ["긍정", "중립", "부정"], default=["긍정", "중립", "부정"])
+        tag_filter = f3.multiselect("태그", TAGS)
+
+        view = df[df["emotion"].isin(emo_filter)]
+        if keyword.strip():
+            view = view[view["content"].str.contains(keyword.strip(), case=False, na=False, regex=False)]
+        if tag_filter:
+            view = view[view["tags"].apply(lambda s: any(t in s.split(",") for t in tag_filter))]
+        view = view.sort_values("diary_date", ascending=False)
+
+        top1, top2 = st.columns([3, 1])
+        top1.caption(f"검색 결과: **{len(view)}개**")
+        csv = (df.assign(diary_date=df["diary_date"].dt.strftime("%Y-%m-%d"))
+                 .to_csv(index=False).encode("utf-8-sig"))
+        top2.download_button("⬇️ CSV 백업", csv, "moodlog_backup.csv", "text/csv")
+
+        if view.empty:
+            st.warning("조건에 맞는 일기가 없어요.")
+
+        for _, row in view.iterrows():
+            date_str = row["diary_date"].strftime("%Y-%m-%d")
+            with st.expander(f"{EMOJI[row['emotion']]} {date_str}  |  {row['emotion']}  ({row['score']:+d}점)"):
+                st.markdown(badge(row["emotion"]) + tag_html(row["tags"]), unsafe_allow_html=True)
+                st.write("")
+
+                new_content = st.text_area("내용", value=row["content"], height=150,
+                                           key=f"edit_{row['id']}")
+                new_mood = st.select_slider(
+                    "기분", options=[1, 2, 3, 4, 5], value=int(row["mood"]),
+                    format_func=lambda x: MOOD_FACE[x], key=f"mood_edit_{row['id']}",
+                )
+
+                b1, b2, _ = st.columns([1, 1, 3])
+                if b1.button("✏️ 수정 저장", key=f"update_{row['id']}"):
+                    if new_content.strip():
+                        emotion, total, *_ = analyze_emotion(new_content, new_mood)
+                        conn.execute(
+                            "UPDATE diaries SET content=?, emotion=?, score=?, mood=? WHERE id=?",
+                            (new_content, emotion, total, new_mood, int(row["id"])),
+                        )
+                        conn.commit()
+                        st.rerun()
+                    else:
+                        st.warning("내용이 비어 있어요.")
+
+                confirm = b2.checkbox("삭제 확인", key=f"confirm_{row['id']}")
+                if confirm and st.button("🗑️ 삭제", key=f"delete_{row['id']}"):
+                    conn.execute("DELETE FROM diaries WHERE id = ?", (int(row["id"]),))
+                    conn.commit()
+                    st.rerun()
